@@ -1,0 +1,214 @@
+
+import pandas as pd 
+import numpy as np
+from matplotlib.patches import Polygon
+from scipy.interpolate import UnivariateSpline
+from scipy.optimize import minimize
+import matplotlib.pyplot as plt
+
+profile = pd.read_csv('test_profile.csv',delimiter=',',header=None)
+
+def talwani(xp, polygon_cords, density):
+    """
+    This function calculates the vertical gravitational attraction (g_z) of a 2D subsurface body using the formula of Talwani et al. (1959).
+    Can be accessed here: https://agupubs.onlinelibrary.wiley.com/doi/pdf/10.1029/JZ064i001p00049 (as of 03/10/23).
+
+    Note that all input units are in SI, and the output of the function (gravitational attraction) is in mGal. 
+    the coordinate system relies on +Z == -Y (DOWN)
+
+    ------------------------------------------------------
+    Input parameters: 
+
+    xp: numpy array
+    points along the x - axis (distance along the profile) at which points to calculate the vertical gravitational attraction at each of the corresponding points.
+
+    polygon_cords: numpy array
+    containing (x,z) coordinate pairs for the different vertice of the polygon in the subsurface.
+
+    desnity: float
+    desnsity of the rock in the subsurface
+
+    ------------------------------------------------------
+    Output parameter:
+    g_z: array 
+    the calculated vertical component of the gravitrational attraction at each x coordinate in xp. 
+    
+    ------------------------------------------------------
+    Refrences:
+
+    Talwani, M., J. L. Worzel, and M. Landisman (1959), Rapid Gravity Computations
+    for Two-Dimensional Bodies with Application to the Mendocino Submarine
+    Fracture Zone, J. Geophys. Res., 64(1), 49-59, doi:10.1029/JZ064i001p00049.
+
+    Uieda, L., V. C. Oliveira Jr, and V. C. F. Barbosa (2013), Modeling the Earth with Fatiando a Terra, Proceedings of the 12th Python in Science Conference, pp. 91-98. doi:10.25080/Majora-8b375195-010
+
+    """
+    #x and 'y' (-y -> + z) coordinates of the polygon 
+    x = polygon_cords[0,:]
+    z = polygon_cords[1,:]
+
+    #Define this as 0 as all measuremrents are taken from Z=0 (assumed to be on the surface of the earth)
+    zp = np.zeros(len(xp))
+
+    #Final array to determine the total vertical acceleration due to gravity at every point
+    final = np.zeros(len(xp))
+
+    #Iterate over every vertice (Number of polygon coords - 1)
+    for v in range(len(x)-1):
+        xv = x[v] - xp
+        zv = z[v] - zp 
+
+        if v == len(x) - 1:
+            #Denoting xv_(i+1) etc
+            xvp1 = x[0] - xp
+            zvp1 = z[0] - zp 
+
+            #The last verice pairs with the first one
+        else:
+            xvp1 = x[v + 1] - xp
+            zvp1 = z[v + 1] - zp
+
+        #Fix to deal with the extremal limits that don't really work. Inspiration for this code has beenm taken heavily from the Fatiando team: 
+        #https://www.fatiando.org/index.html
+        # or more specifically: https://programtalk.com/vs2/python/4196/fatiando/fatiando/gravmag/talwani.py/
+
+        #I spent absolutely ages trying to get all of the extremal limits to work as outlined by (Talwani et al., 1959) and lets just be happy with the temporary fix as outlined below instead. Just add 0.01 to everything to make sure theres no /0 errors etc. 
+
+        xv[xv == 0.] += 0.01
+        xv[xv == xvp1] += 0.01
+
+        zv[zv[xv == zv] == 0.] += 0.01
+        zv[zv == zvp1] += 0.01
+
+        zvp1[zvp1[xvp1 == zvp1] == 0.] += 0.01
+        xvp1[xvp1 == 0.] += 0.01
+        #End of the fix (some may call it a bodge)
+
+        phi = np.arctan2(zvp1 - zv,xvp1 - xv)
+        a = xvp1 + zvp1 * (xvp1 - xv) / (zv - zvp1)
+        theta = np.arctan2(zv, xv)
+        theta_p1 = np.arctan2(zvp1, xvp1)
+        theta[theta < 0] += np.pi
+        theta_p1[theta_p1 < 0] += np.pi
+
+        temp = a * np.sin(phi) * np.cos(phi) * (
+                theta - theta_p1 + np.tan(phi) * np.log(
+                    (np.cos(theta) * (np.tan(theta) - np.tan(phi))) /
+                    (np.cos(theta_p1) * (np.tan(theta_p1) - np.tan(phi)))
+                    )
+                )
+    
+        temp[theta == theta_p1] = 0.
+        final = final + temp
+
+    g_z = 2*G*final*density*SI2mGAL
+
+    return g_z
+
+def objective(coords):
+    coords = coords.reshape((2, npoints+1))
+
+    result = talwani(xp, coords, density)
+    return np.sum(np.abs(result -y_fine))
+
+#Defining coordinates to model within
+#These are in SI Base units, M
+xmin = min(profile[0])
+xmax = max(profile[0]*1000)
+ymin = 0
+ymax = 20_000
+density = 450  # Kg/m3
+G = 6.67e-11  # NM2/kg3
+SI2mGAL = 1e5
+npoints = 6  # number of points I want the model to solve for.
+xp = np.linspace(xmin, xmax, xmax)
+
+randx = np.random.uniform(xmin, xmax, size=npoints)
+randy = np.random.uniform(ymin, -ymax, size=npoints)
+P = np.vstack([randx, randy])
+# Calculate the centroid of the points
+c = np.mean(P, axis=1)
+
+# Calculate the vectors connecting points to the centroid
+d = P - np.expand_dims(c, axis=1)
+
+# Calculate angles of the vectors using atan2
+th = np.arctan2(d[1, :], d[0, :])
+
+# Sort angles and get corresponding indices
+si = np.argsort(th)
+st = th[si]
+
+# Rearrange the original points based on the sorted indices
+sP = P[:, si]
+
+# Add the first point again to close the polygon
+sP_closed = np.column_stack((sP, sP[:, 0]))
+
+#Run a spline curve through the data to allow direct comparison between the profile and the modelled gravity.
+spline = UnivariateSpline(profile[0]*1000, profile[1])
+x_fine = np.linspace(xmin, xmax, 100_000)
+y_fine = spline(x_fine)
+
+in_guess = sP_closed.flatten()
+optimal = minimize(objective, in_guess, method='Nelder-Mead').x
+optimal_coords = optimal.reshape((2, npoints +1 ))
+print(np.shape(optimal_coords))
+optimized_result = talwani(xp, optimal_coords, density)
+
+print(min(optimized_result), max(optimized_result))
+
+#Calculate the gravity anomaly based on the innitial random guess.
+result = talwani(xp, sP_closed, density)
+
+
+#An optimal subsurface body would have this difference as being y = 0 across all x values. 
+difference = abs(y_fine) - abs(result)
+
+print("")
+print(optimal_coords)
+print("")
+c = np.mean(optimal_coords, axis=1)
+
+# Calculate the vectors connecting points to the centroid
+d = optimal_coords - np.expand_dims(c, axis=1)
+
+# Calculate angles of the vectors using atan2
+th = np.arctan2(d[1, :], d[0, :])
+
+# Sort angles and get corresponding indices
+si = np.argsort(th)
+st = th[si]
+
+# Rearrange the original points based on the sorted indices
+sP = optimal_coords[:, si]
+
+# Add the first point again to close the polygon
+sP_closed = np.column_stack((sP, sP[:, 0]))
+
+Poly = Polygon(sP_closed.T,closed=True, edgecolor = 'black', facecolor='gray')
+optimized_result = talwani(xp, sP_closed, density)
+
+
+plt.figure()
+plt.subplot(211)
+plt.plot(profile[0]*1000,profile[1])
+#plt.plot(xp, result)
+#plt.plot(x_fine,y_fine)
+#plt.plot(x_fine,difference)
+plt.plot(xp, optimized_result)
+plt.legend(["Profile", "Optimal"])#,"model","spline", "diff", "optimal"])
+plt.xlim([0,xmax])
+plt.xlabel("Distance (m)")
+plt.ylabel("Gravity (mGal)")
+
+plt.subplot(212)
+plt.gca().add_patch(Poly)
+ 
+#plt.scatter(randx,randy)
+plt.scatter(sP_closed[0], sP_closed[1])
+plt.xlim([0,xmax])
+plt.ylabel("Depth (m)")
+plt.xlabel("Distance (m)")
+plt.tight_layout()
+plt.show()
