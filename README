@@ -1,0 +1,25 @@
+## Written in Python:
+
+So this is mainly incomplete - but is a documentation of everything I have completed so far. Also this is also me messing / learning how to use git/ Github. 
+
+This is a semi-functional GUI in Python - based on a piece of software called Grav2D, written by Alan McCormack who has since retired from the University of Liverpool.
+It uses methods as defined by Talwani et al. (1959), to calculate the vertical acceleration due to gravity from 2D polygons in the subsurface.
+
+-------------------------------------------
+
+## main.py
+Loads, and displays the initial GUI - using the python package CustomTKinter (https://pypi.org/project/customtkinter/0.3/).
+This mainly works - loading profiles works dependant on the data being in a specific format, saved as a .csv file (Two columns of X distance and gravity reading).
+A lot of the buttons have absolutely no functionality - appart from displaying text as to what they are supposed to do. 
+
+## auto.py
+Uses a Scipy package to try and minimise the missfit between the observed gravitational data, and models created by any constructed Polygons of N sides. 
+This takes too long to compute - and becomes unfeasible for anything greater than a 3 vertice (Triangular) polygon. The resultng polygon also has no damping applied to it, therefore unrealistic models are often produced as the software doesn't favour any with the shortest radial distance from the centre. 
+
+ -------------------------------------------
+
+Hope you enjoy! 
+I do appreciate this code will not be pretty, effective, or even particually efficient. 
+This is the first time I have tried to write any sort of extended project in any sort of computing language. The first time I have tried to do anything with a GUI.
+First time I have written code that pulls in multiple other functions/ code/ pieces of data from other sources in order to complete tasks. 
+I may or may not finish what I have started - but I wanted to document what I've done.
